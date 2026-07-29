@@ -26,32 +26,52 @@ const scrapeUpworkJobs = async () => {
   const jobs = [];
   for (const keyword of KEYWORDS) {
     try {
-      const searchUrl = `https://www.upwork.com/nx/jobs/search/?q=${encodeURIComponent(keyword)}&sort=posted_on&limit=50`;
+      const searchUrl = `https://www.upwork.com/nx/jobs/search/?q=${encodeURIComponent(keyword)}&sort=posted_on`;
       console.log(`Scraping: ${keyword}`);
       const html = await fetchUrl(searchUrl);
-      const jobPattern = /"id":"(\d+)","title":"([^"]+)".*?"budgetAmount":(\d+(?:\.\d+)?).*?"clientRating":([\d.]+)?/g;
-      let match;
-      while ((match = jobPattern.exec(html)) !== null) {
-        const jobId = match[1];
-        const title = match[2];
-        const budget = parseFloat(match[3]);
-        const clientRating = match[4] ? parseFloat(match[4]) : 0;
-        if (budget >= MIN_BUDGET) {
-          jobs.push({
-            id: jobId,
-            title: title,
-            budget: budget,
-            url: `https://www.upwork.com/jobs/${jobId}`,
-            client_rating: clientRating,
-            category: keyword
-          });
+      
+      // Try multiple regex patterns to catch jobs
+      const patterns = [
+        /"id":"(\d+)","title":"([^"]+)".*?"budgetAmount":(\d+(?:\.\d+)?).*?"clientRating":([\d.]+)?/g,
+        /"jobId":"(\d+)","title":"([^"]+)".*?"budget":(\d+(?:\.\d+)?).*?"rating":([\d.]+)?/g,
+        /data-job-id="(\d+)".*?title="([^"]+)".*?budget[^>]*>.*?\$(\d+(?:\.\d+)?)/g
+      ];
+      
+      let matched = false;
+      for (const pattern of patterns) {
+        let match;
+        while ((match = pattern.exec(html)) !== null) {
+          const jobId = match[1];
+          const title = match[2];
+          const budget = parseFloat(match[3]);
+          const clientRating = match[4] ? parseFloat(match[4]) : 0;
+
+          if (budget >= MIN_BUDGET) {
+            jobs.push({
+              id: jobId,
+              title: title,
+              budget: budget,
+              url: `https://www.upwork.com/jobs/${jobId}`,
+              client_rating: clientRating,
+              category: keyword
+            });
+            matched = true;
+          }
         }
+        if (matched) break;
       }
+      
+      if (!matched) {
+        console.log(`No jobs found for: ${keyword} (tried ${patterns.length} patterns)`);
+      }
+
       await new Promise(resolve => setTimeout(resolve, 2000));
     } catch (error) {
       console.error(`Error scraping ${keyword}:`, error.message);
     }
   }
+
+  console.log(`Total jobs found: ${jobs.length}`);
   return jobs;
 };
 
