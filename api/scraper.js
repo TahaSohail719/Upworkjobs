@@ -151,3 +151,6 @@ const main = async () => {
 };
 
 main();
+
+// Run every 5 minutes (300000 ms)
+setInterval(main, 300000);
