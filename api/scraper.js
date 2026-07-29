@@ -1,47 +1,76 @@
 const https = require('https');
 const { URL } = require('url');
 
+// ============ CONFIGURATION ============
 const KEYWORDS = ['Odoo', 'Odoo ERP', 'Odoo Bookkeeping', 'Odoo Shopify', 'Odoo Automation'];
 const MIN_BUDGET = 500;
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 
+// ============ FETCH URL WITH BETTER HEADERS ============
 const fetchUrl = (url) => {
   return new Promise((resolve, reject) => {
     const options = {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-      }
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Accept-Encoding': 'gzip, deflate',
+        'Connection': 'keep-alive',
+        'Upgrade-Insecure-Requests': '1',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache'
+      },
+      timeout: 15000
     };
+
     const request = https.get(url, options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => resolve(data));
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(data);
+        } else {
+          reject(new Error(`HTTP ${res.statusCode}: ${res.statusMessage}`));
+        }
+      });
     });
+
     request.on('error', reject);
-    request.setTimeout(10000, () => request.destroy());
+    request.setTimeout(15000, () => request.destroy());
   });
 };
 
+// ============ SCRAPE UPWORK JOBS ============
 const scrapeUpworkJobs = async () => {
   const jobs = [];
+  const seenJobIds = new Set();
+
   for (const keyword of KEYWORDS) {
     try {
-      const searchUrl = `https://www.upwork.com/nx/jobs/search/?q=${encodeURIComponent(keyword)}&sort=posted_on`;
-      console.log(`Scraping: ${keyword}`);
-      const html = await fetchUrl(searchUrl);
+      const searchUrl = `https://www.upwork.com/nx/jobs/search/?q=${encodeURIComponent(keyword)}&sort=posted_on&limit=50`;
+      console.log(`[${new Date().toISOString()}] Scraping: ${keyword}`);
       
-      // Try multiple regex patterns to catch jobs
+      const html = await fetchUrl(searchUrl);
+
+      // Multiple regex patterns to catch different Upwork HTML structures
       const patterns = [
         /"id":"(\d+)","title":"([^"]+)".*?"budgetAmount":(\d+(?:\.\d+)?).*?"clientRating":([\d.]+)?/g,
         /"jobId":"(\d+)","title":"([^"]+)".*?"budget":(\d+(?:\.\d+)?).*?"rating":([\d.]+)?/g,
-        /data-job-id="(\d+)".*?title="([^"]+)".*?budget[^>]*>.*?\$(\d+(?:\.\d+)?)/g
+        /"(\d+)"\s*:\s*\{\s*"title"\s*:\s*"([^"]+)".*?"budget"\s*:\s*(\d+(?:\.\d+)?)/g
       ];
-      
-      let matched = false;
+
+      let foundJobsForKeyword = 0;
+
       for (const pattern of patterns) {
         let match;
         while ((match = pattern.exec(html)) !== null) {
           const jobId = match[1];
+          
+          // Skip if we've already seen this job
+          if (seenJobIds.has(jobId)) {
+            continue;
+          }
+
           const title = match[2];
           const budget = parseFloat(match[3]);
           const clientRating = match[4] ? parseFloat(match[4]) : 0;
@@ -55,26 +84,31 @@ const scrapeUpworkJobs = async () => {
               client_rating: clientRating,
               category: keyword
             });
-            matched = true;
+            seenJobIds.add(jobId);
+            foundJobsForKeyword++;
           }
         }
-        if (matched) break;
-      }
-      
-      if (!matched) {
-        console.log(`No jobs found for: ${keyword} (tried ${patterns.length} patterns)`);
       }
 
-      await new Promise(resolve => setTimeout(resolve, 2000));
+      if (foundJobsForKeyword === 0) {
+        console.log(`[${new Date().toISOString()}] No jobs found for: ${keyword}`);
+      } else {
+        console.log(`[${new Date().toISOString()}] Found ${foundJobsForKeyword} jobs for: ${keyword}`);
+      }
+
+      // Wait 5 seconds between searches to avoid rate limiting
+      await new Promise(resolve => setTimeout(resolve, 5000));
+
     } catch (error) {
-      console.error(`Error scraping ${keyword}:`, error.message);
+      console.error(`[${new Date().toISOString()}] Error scraping ${keyword}:`, error.message);
     }
   }
 
-  console.log(`Total jobs found: ${jobs.length}`);
+  console.log(`[${new Date().toISOString()}] Total jobs found: ${jobs.length}`);
   return jobs;
 };
 
+// ============ SEND SLACK NOTIFICATION ============
 const sendSlackNotification = async (job) => {
   const payload = {
     channel: '#upwork-jobs',
@@ -136,41 +170,71 @@ const sendSlackNotification = async (job) => {
       path: url.pathname + url.search,
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
-      }
+        'Content-Type': 'application/json',
+        'Content-Length': Buffer.byteLength(JSON.stringify(payload))
+      },
+      timeout: 10000
     };
+
     const request = https.request(options, (res) => {
       let data = '';
       res.on('data', (chunk) => { data += chunk; });
-      res.on('end', () => resolve(data));
+      res.on('end', () => {
+        if (res.statusCode === 200) {
+          resolve(data);
+        } else {
+          reject(new Error(`Slack returned status ${res.statusCode}`));
+        }
+      });
     });
+
     request.on('error', reject);
+    request.on('timeout', () => {
+      request.destroy();
+      reject(new Error('Slack request timeout'));
+    });
+
     request.write(JSON.stringify(payload));
     request.end();
   });
 };
 
+// ============ MAIN FUNCTION ============
 const main = async () => {
-  console.log('Starting Upwork job scraper...');
+  console.log(`[${new Date().toISOString()}] ===== STARTING UPWORK JOB SCRAPER =====`);
+  
   try {
     const jobs = await scrapeUpworkJobs();
-    console.log(`Found ${jobs.length} jobs`);
+    console.log(`[${new Date().toISOString()}] Total jobs to notify: ${jobs.length}`);
+
+    let notifiedCount = 0;
+
     for (const job of jobs) {
       try {
         await sendSlackNotification(job);
-        console.log(`Notified: ${job.title}`);
-        await new Promise(resolve => setTimeout(resolve, 500));
+        notifiedCount++;
+        console.log(`[${new Date().toISOString()}] ✓ Notified: ${job.title}`);
+        
+        // Wait 1 second between Slack notifications
+        await new Promise(resolve => setTimeout(resolve, 1000));
+
       } catch (error) {
-        console.error(`Error: ${error.message}`);
+        console.error(`[${new Date().toISOString()}] ✗ Error notifying job ${job.id}:`, error.message);
       }
     }
-    console.log('Complete');
+
+    console.log(`[${new Date().toISOString()}] ===== SCRAPING COMPLETE =====`);
+    console.log(`[${new Date().toISOString()}] Summary: Found ${jobs.length} jobs, notified ${notifiedCount} jobs`);
+
   } catch (error) {
-    console.error('Fatal error:', error);
+    console.error(`[${new Date().toISOString()}] FATAL ERROR:`, error.message);
   }
 };
 
+// ============ RUN SCRAPER ============
 main();
 
-// Run every 5 minutes (300000 ms)
+// Run every 5 minutes (300000 milliseconds)
 setInterval(main, 300000);
+
+console.log(`[${new Date().toISOString()}] Scraper scheduled to run every 5 minutes`);
