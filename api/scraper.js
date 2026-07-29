@@ -1,7 +1,7 @@
 const https = require('https');
 const { URL } = require('url');
 
-const KEYWORDS = ['Odoo', 'ERP', 'Shopify', 'Automation', 'Bookkeeping'];
+const KEYWORDS = ['Odoo', 'Odoo ERP', 'Odoo Bookkeeping', 'Odoo Shopify', 'Odoo Automation'];
 const MIN_BUDGET = 500;
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
 
