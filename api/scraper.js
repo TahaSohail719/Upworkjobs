@@ -1,15 +1,9 @@
-// api/scraper.js - Vercel serverless function
-
 const https = require('https');
 const { URL } = require('url');
 
 const KEYWORDS = ['Odoo', 'ERP', 'Shopify', 'Automation', 'Bookkeeping'];
 const MIN_BUDGET = 500;
 const SLACK_WEBHOOK = process.env.SLACK_WEBHOOK_URL;
-
-// Simple in-memory cache for seen jobs (reset on function restart)
-// For production, use a proper database
-const seenJobs = new Set();
 
 const fetchUrl = (url) => {
   return new Promise((resolve, reject) => {
@@ -32,6 +26,7 @@ const fetchUrl = (url) => {
 
 const scrapeUpworkJobs = async () => {
   const jobs = [];
+  const seenJobs = new Set();
   
   for (const keyword of KEYWORDS) {
     try {
@@ -40,7 +35,6 @@ const scrapeUpworkJobs = async () => {
       console.log(`Scraping: ${keyword}`);
       const html = await fetchUrl(searchUrl);
 
-      // Parse job data from HTML - looking for job ID and title patterns
       const jobPattern = /"id":"(\d+)","title":"([^"]+)".*?"budgetAmount":(\d+(?:\.\d+)?).*?"clientRating":([\d.]+)?/g;
       
       let match;
@@ -118,15 +112,6 @@ const sendSlackNotification = async (job) => {
             },
             url: job.url,
             style: 'primary'
-          },
-          {
-            type: 'button',
-            text: {
-              type: 'plain_text',
-              text: '📋 Generate Proposal',
-              emoji: true
-            },
-            url: `${process.env.PROPOSAL_GENERATOR_URL}?job=${encodeURIComponent(job.title)}`
           }
         ]
       },
@@ -159,40 +144,8 @@ const sendSlackNotification = async (job) => {
   });
 };
 
-export default async (req, res) => {
-  // Verify the request is from Vercel Cron
-  const authHeader = req.headers.authorization;
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
-    return res.status(401).json({ error: 'Unauthorized' });
-  }
-
+const scrapeAndNotify = async () => {
+  console.log('Starting Upwork job scraper...');
+  
   try {
-    const jobs = await scrapeUpworkJobs();
-    console.log(`Found ${jobs.length} new jobs`);
-
-    let notifiedCount = 0;
-    for (const job of jobs) {
-      try {
-        await sendSlackNotification(job);
-        notifiedCount++;
-        await new Promise(resolve => setTimeout(resolve, 500));
-      } catch (error) {
-        console.error(`Failed to notify job ${job.id}:`, error);
-      }
-    }
-
-    res.status(200).json({
-      success: true,
-      totalFound: jobs.length,
-      notified: notifiedCount,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('Scraper error:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message,
-      timestamp: new Date().toISOString()
-    });
-  }
-};
+    const jobs
