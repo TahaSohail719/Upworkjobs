@@ -2,7 +2,6 @@
   "name": "upwork-job-scraper",
   "version": "1.0.0",
   "description": "Upwork job scraper with Slack notifications",
-  "type": "module",
   "main": "api/scraper.js",
   "scripts": {
     "dev": "node api/scraper.js",
