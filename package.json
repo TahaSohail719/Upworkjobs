@@ -1,0 +1,20 @@
+{
+  "name": "upwork-job-scraper",
+  "version": "1.0.0",
+  "description": "Upwork job scraper with Slack notifications",
+  "main": "api/scraper.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel",
+    "test": "node test-scraper.js"
+  },
+  "dependencies": {
+    "sqlite3": "^5.1.6"
+  },
+  "devDependencies": {
+    "vercel": "latest"
+  },
+  "engines": {
+    "node": "18.x"
+  }
+}
